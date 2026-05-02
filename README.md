@@ -1,6 +1,6 @@
 # School Scheduler API
 
-A .NET 10 REST API that automatically generates weekly school timetables using a greedy scheduling algorithm. Built with ASP.NET Core, Dapper, PostgreSQL, and Scalar UI.
+A .NET 10 REST API that automatically generates weekly school timetables using a **CSP backtracking algorithm with forward checking**. Built with ASP.NET Core, Dapper, PostgreSQL, and Scalar UI.
 
 ---
 
@@ -20,10 +20,10 @@ A .NET 10 REST API that automatically generates weekly school timetables using a
 Schedule/
 ├── Program.cs                  # App entry point and middleware
 ├── Schedule.csproj             # Project dependencies
-├── TimetableEngine.cs          # Scheduling algorithm
+├── TimetableEngine.cs          # CSP backtracking scheduling algorithm
 ├── SchedulerController.cs      # API controller
 ├── CurriculumRepository.cs     # Database queries
-└── Models.cs                   # TimeSlot, ClassRequirements, SchedulePlacement
+└── Models.cs                   # TimeSlot, ClassRequirements, SchedulePlacement, PlacementTask
 ```
 
 ---
@@ -126,7 +126,7 @@ Generates a full weekly timetable and saves it to the database.
 **Error Response:**
 ```json
 {
-  "error": "Could not schedule subject 4 for class 4. Only placed 1/5 hours. Teacher 7 may be overloaded."
+  "error": "Algorithm explored all possible combinations. These constraints are impossible to fulfill."
 }
 ```
 
@@ -134,35 +134,73 @@ Generates a full weekly timetable and saves it to the database.
 
 ## How the Scheduling Algorithm Works
 
-The algorithm (`TimetableEngine.cs`) uses a **greedy approach** to place lessons in one pass without backtracking.
+The algorithm (`TimetableEngine.cs`) uses **CSP Backtracking with Forward Checking** — a smarter approach that can undo bad decisions and try different combinations until a valid schedule is found.
 
-### Step 1 — Flatten Requirements
-Each curriculum rule (e.g. "English needs 5 hours for Grade 1") is expanded into individual lesson blocks. For 12 classes × 30 hours = **360 individual blocks** to place.
+### Key Classes
 
-### Step 2 — Order Blocks
-Hardest constraints are scheduled first:
+- `PlacementTask` — represents a single lesson to be scheduled. Contains the requirement (`ClassRequirements`) and a flag `IsDoublePeriod` indicating whether it needs two adjacent periods.
+
+### Step 1 — Order Requirements
+Hardest constraints are tackled first:
 - Consecutive (double period) subjects go first
 - Then subjects with the most weekly hours
 
-### Step 3 — Place Each Block
-For each block the algorithm finds the first available slot that satisfies all constraints using HashSets for fast O(1) conflict checking.
+### Step 2 — Flatten into Tasks
+Each curriculum rule is broken into individual `PlacementTask` objects:
+- A subject needing 5 hours with `RequiresConsecutive = true` → 2 double-period tasks + 1 single task (5 = 2+2+1)
+- A subject needing 5 hours with `RequiresConsecutive = false` → 5 single tasks
+
+For 12 classes × 30 hours = **360 individual tasks** to place.
+
+### Step 3 — SolveCSP (Recursive Backtracking)
+
+This is the core engine. It works like placing guests at a dinner table:
+
+1. Pick the next unplaced task
+2. Try every available slot (or adjacent slot pair for double periods)
+3. **Forward Check** — before placing, verify the slot satisfies all constraints
+4. If valid → place the lesson and recursively try to place the next task
+5. If the next task fails → **backtrack**: undo the placement and try a different slot
+6. If all slots are exhausted → return `false` to trigger the previous task to backtrack
+7. If all tasks are placed → return `true` (success!)
+
+### Step 4 — PlaceLesson / RemoveLesson
+
+Every placement updates four tracking structures. RemoveLesson undoes all four — this is what makes backtracking possible:
+- `teacherSlotUsed` — which slots a teacher is already in
+- `classSlotUsed` — which slots a class already has
+- `teacherHours` — running total of hours per teacher
+- `classSubjectDayCount` — how many times a subject appears per class per day
 
 ### Constraints Checked Per Placement
 - Teacher is not already teaching at that slot
 - Class does not already have a lesson at that slot
 - Teacher has not exceeded 25 hours/week
 - Same subject not already scheduled that day (for non-consecutive subjects)
-- Consecutive subjects must be placed in adjacent periods on the same day
+- Consecutive subjects must be placed as adjacent pairs on the same day
+
+### Error Response
+If the algorithm exhausts all possible combinations without finding a valid schedule:
+```json
+{
+  "error": "Algorithm explored all possible combinations. These constraints are impossible to fulfill."
+}
+```
+This means the database constraints (teacher assignments, hours) need to be fixed — not the code.
 
 ---
 
 ## Common Errors and Fixes
 
-### "Teacher capacities are exceeded"
+### "Algorithm explored all possible combinations. These constraints are impossible to fulfill."
 
-A teacher is assigned too many hours across too many classes.
+The backtracking algorithm tried every possible slot combination and found no valid schedule. This always means the **data is the problem**, not the code. Common causes:
 
-**Diagnose:**
+- A teacher is assigned too many hours (over 25/week)
+- One teacher covers both Section A and Section B of the same grade and subject
+- Not enough time slots exist to fit all required hours
+
+**Diagnose teacher loads:**
 ```sql
 SELECT 
     ta.teacher_id,
@@ -182,12 +220,6 @@ ORDER BY total_hours_required DESC;
 - Teacher B → grades 1-3, section B
 - Teacher C → grades 4-6, section A
 - Teacher D → grades 4-6, section B
-
-### "Could not schedule subject X for class Y. Only placed Z/N hours."
-
-The algorithm ran out of available slots for a teacher. This usually means:
-- One teacher is assigned to both Section A and Section B of a grade
-- Teacher has more than 25 required hours
 
 **Check which classes a teacher covers:**
 ```sql
@@ -244,7 +276,8 @@ ORDER BY total_hours DESC;
 
 - Each generated schedule is saved with a unique `schedule_version` UUID
 - Schedules are saved with `is_active = FALSE` by default — you can add logic to activate a specific version
-- The algorithm is deterministic per run but does not retry on failure — fix the data and re-run
+- The algorithm uses backtracking — it will always find a valid schedule if one exists, or tell you it's impossible if not
+- If the algorithm is too slow, the issue is almost always bad data (overloaded teachers) not the code itself
 
 https://chatgpt.com/share/69f6038e-eedc-83eb-8632-6c60cf5cc2f7
 
