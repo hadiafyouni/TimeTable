@@ -245,3 +245,7 @@ ORDER BY total_hours DESC;
 - Each generated schedule is saved with a unique `schedule_version` UUID
 - Schedules are saved with `is_active = FALSE` by default — you can add logic to activate a specific version
 - The algorithm is deterministic per run but does not retry on failure — fix the data and re-run
+
+https://chatgpt.com/share/69f6038e-eedc-83eb-8632-6c60cf5cc2f7
+
+https://gemini.google.com/share/eee8ec4d5ed5

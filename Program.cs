@@ -7,7 +7,7 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 
 string connectionString =
-    "Host=localhost;Database=schoolSchedule;Username=postgres;Password=postgre2005;";
+    "Host=localhost;Database=schoolSchedule;Username=postgres;Password=''''';";
 
 builder.Services.AddScoped<CurriculumRepository>(_ =>
     new CurriculumRepository(connectionString));
