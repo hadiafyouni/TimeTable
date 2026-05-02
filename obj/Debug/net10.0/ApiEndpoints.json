@@ -1,0 +1,12 @@
+[
+  {
+    "ContainingType": "Schedule.SchedulerController",
+    "Method": "Generate",
+    "RelativePath": "api/Scheduler/generate",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [],
+    "ReturnTypes": []
+  }
+]
